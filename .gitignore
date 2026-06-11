@@ -1,0 +1,11 @@
+# Terraform state files
+*.tfstate
+*.tfstate.*
+
+# Local configuration files
+*.tfvars
+.terraform/
+
+# Credentials and keys
+*.json
+.gcp-creds/
