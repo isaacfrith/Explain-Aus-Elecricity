@@ -7,10 +7,13 @@ import base64
 
 import uvicorn
 from fastapi import FastAPI, Request, Response
+from pydantic import BaseModel
 from google.cloud import storage
 from google.cloud import aiplatform_v1
 from google.cloud.aiplatform import matching_engine
-from langchain_google_vertexai import VertexAIEmbeddings
+from langchain_google_vertexai import VertexAIEmbeddings, ChatVertexAI, VectorSearchVectorStore
+from langchain_core.prompts import PromptTemplate
+from langchain.chains import RetrievalQA
 
 import config
 
@@ -66,6 +69,47 @@ def get_index() -> matching_engine.MatchingEngineIndex:
             location=config.VERTEX_AI_LOCATION
         )
     return _index
+
+
+_vector_store: VectorSearchVectorStore | None = None
+_qa_chain = None
+
+def get_vector_store() -> VectorSearchVectorStore:
+    global _vector_store
+    if _vector_store is None:
+        _vector_store = VectorSearchVectorStore.from_components(
+            project_id=config.PROJECT_ID,
+            region=config.VERTEX_AI_LOCATION,
+            gcp_credentials=None,
+            embedding=get_embedder(),
+            index_id=config.VERTEX_INDEX_ID,
+            endpoint_id=config.VERTEX_INDEX_ENDPOINT_ID,
+            stream_update=True,
+        )
+    return _vector_store
+
+def get_qa_chain():
+    global _qa_chain
+    if _qa_chain is None:
+        llm = ChatVertexAI(model_name="gemini-1.5-pro", project=config.PROJECT_ID, location=config.VERTEX_AI_LOCATION)
+        retriever = get_vector_store().as_retriever(search_kwargs={"k": 5})
+        prompt_template = """Use the following pieces of context from AEMO Market Notices to answer the question at the end. 
+If you don't know the answer, just say that you don't know, don't try to make up an answer.
+
+Context:
+{context}
+
+Question: {question}
+Helpful Answer:"""
+        prompt = PromptTemplate(template=prompt_template, input_variables=["context", "question"])
+        
+        _qa_chain = RetrievalQA.from_chain_type(
+            llm=llm,
+            chain_type="stuff",
+            retriever=retriever,
+            chain_type_kwargs={"prompt": prompt}
+        )
+    return _qa_chain
 
 
 # ---------------------------------------------------------------------------
@@ -156,9 +200,32 @@ async def eventarc_handler(request: Request):
         logger.info(f"Successfully processed {object_name} -> {doc_id}")
         return Response(status_code=200, content="OK")
 
-    except Exception:
+    except Exception as e:
+        from google.api_core.exceptions import NotFound
+        if isinstance(e, NotFound):
+            logger.warning(f"File {gcs_uri} not found. It may have been deleted. Dropping event.")
+            return Response(status_code=200, content="File not found, event dropped")
+            
         logger.exception(f"Error processing {gcs_uri}")
         return Response(status_code=500, content="Internal error")
+
+
+class QueryRequest(BaseModel):
+    query: str
+
+class QueryResponse(BaseModel):
+    answer: str
+
+@app.post("/ask", response_model=QueryResponse)
+def ask_question(request: QueryRequest):
+    """Langchain agent endpoint to query the AEMO notices."""
+    try:
+        chain = get_qa_chain()
+        result = chain.invoke({"query": request.query})
+        return QueryResponse(answer=result["result"])
+    except Exception as e:
+        logger.exception("Error answering question")
+        return Response(status_code=500, content=f"Internal error: {str(e)}")
 
 
 # ---------------------------------------------------------------------------
