@@ -105,6 +105,10 @@ resource "google_cloud_run_v2_service" "document_processor" {
         value = google_vertex_ai_index_endpoint.vector_search_endpoint.public_endpoint_domain_name
       }
       env {
+        name  = "VERTEX_INDEX_ENDPOINT_ID"
+        value = google_vertex_ai_index_endpoint.vector_search_endpoint.id
+      }
+      env {
         name  = "VERTEX_INDEX_ID"
         value = google_vertex_ai_index.vector_index.id
       }
