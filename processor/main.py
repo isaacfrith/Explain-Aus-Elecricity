@@ -77,9 +77,13 @@ _qa_chain = None
 def get_vector_store() -> VectorSearchVectorStore:
     global _vector_store
     if _vector_store is None:
+        if not config.VERTEX_INDEX_ID or not config.VERTEX_INDEX_ENDPOINT_ID:
+            raise ValueError("VERTEX_INDEX_ID and VERTEX_INDEX_ENDPOINT_ID must be set in your environment variables.")
+            
         _vector_store = VectorSearchVectorStore.from_components(
             project_id=config.PROJECT_ID,
             region=config.VERTEX_AI_LOCATION,
+            gcs_bucket_name=config.GCS_BUCKET_NAME,
             gcp_credentials=None,
             embedding=get_embedder(),
             index_id=config.VERTEX_INDEX_ID,
@@ -179,23 +183,31 @@ async def eventarc_handler(request: Request):
         object_name = attributes.get("objectId")
 
     if not bucket_name or not object_name:
-        logger.error(f"Could not extract bucket/object from event body: {body}")
-        return Response(status_code=400, content="Missing bucket or object")
+        logger.error("Could not extract bucket or object name from event.")
+        return Response(status_code=400, content="Bad Request")
+
+    # Prevent infinite loops! LangChain will write .json files to the same bucket to store text.
+    # We only want to process AEMO market notices, which start with NEMITWEB.
+    if not object_name.startswith("NEMITWEB"):
+        logger.info(f"Ignoring non-AEMO file: {object_name}")
+        return Response(status_code=200, content="Ignored non-AEMO file")
 
     gcs_uri = f"gs://{bucket_name}/{object_name}"
     logger.info(f"Processing: {gcs_uri}")
 
     try:
         text = process_document(gcs_uri)
-        if not text.strip():
-            logger.warning(f"No text extracted from {gcs_uri}")
-            return Response(status_code=200, content="No text extracted")
-
-        embedding = embed_text(text)
-
         doc_id = str(uuid.uuid4())
-        metadata = {"source": "AEMO", "filename": object_name}
-        upsert_vector(doc_id, embedding, metadata)
+        logger.info(f"Generated UUID {doc_id} for {object_name}")
+
+        # Use LangChain to embed, upload the text to GCS, and upsert the vector!
+        logger.info("Adding text to VectorStore...")
+        vector_store = get_vector_store()
+        vector_store.add_texts(
+            texts=[text],
+            metadatas=[{"source": "AEMO", "filename": object_name}],
+            ids=[doc_id]
+        )
 
         logger.info(f"Successfully processed {object_name} -> {doc_id}")
         return Response(status_code=200, content="OK")

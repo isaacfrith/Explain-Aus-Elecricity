@@ -34,18 +34,20 @@ def test_pipeline(gcs_uri: str):
 
     # 3. Upsert to Vertex Search (Optional for testing, can be commented out)
     try:
-        print("3. Upserting to Vector Search...")
+        print("3. Upserting to Vector Search and GCS via LangChain...")
+        from main import get_vector_store
+        import uuid
+        
+        vector_store = get_vector_store()
+        doc_id = str(uuid.uuid4())
         metadata = {"source": "AEMO", "filename": gcs_uri.split("/")[-1]}
-        upsert_vector("test-doc-id-1234", embedding, metadata)
-        print("   Success! Vector upserted.")
+        
+        vector_store.add_texts(texts=[text], metadatas=[metadata], ids=[doc_id])
+        print(f"   Success! Vector upserted with ID: {doc_id}")
     except Exception as e:
         print(f"   [ERROR] Failed to upsert vector: {e}")
         import traceback
         traceback.print_exc()
-        if hasattr(e, "errors"):
-            print("Errors:", e.errors)
-        if hasattr(e, "details"):
-            print("Details:", getattr(e, "details", lambda: e)())
         return
 
 if __name__ == "__main__":

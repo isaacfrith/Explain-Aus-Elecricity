@@ -9,4 +9,5 @@ VERTEX_INDEX_ENDPOINT = os.environ.get("VERTEX_INDEX_ENDPOINT", "")
 VERTEX_INDEX_ENDPOINT_ID = os.environ.get("VERTEX_INDEX_ENDPOINT_ID", "")
 VERTEX_INDEX_ID = os.environ.get("VERTEX_INDEX_ID", "")
 VERTEX_INDEX_DEPLOYED_ID = os.environ.get("VERTEX_INDEX_DEPLOYED_ID", "deployed_nem_index")
+GCS_BUCKET_NAME = os.environ.get("GCS_BUCKET_NAME", "nem-market-notices-47d6a935")
 
